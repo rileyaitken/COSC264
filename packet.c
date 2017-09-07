@@ -18,7 +18,7 @@ struct packet_s{
     int type;
     int seqno;
     int dataLen;
-    char* data;
+    char data[];
 };
 
 #endif

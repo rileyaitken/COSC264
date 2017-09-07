@@ -1,5 +1,5 @@
 /*
- * serialisation.h
+ * socketfunctions.h
  * 
  * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
  * 
@@ -21,26 +21,13 @@
  * 
  */
 
-#ifndef SERIALISATION_H
-#define SERIALISATION_H
+#ifndef SOCKETFUNCTIONS_H
+#define SOCKETFUNCTIONS_H
+
 #include <stdio.h>
-#include "packet.h"
 
-void error(char* errMsg);
+int bindSocket(int socket, struct sockaddr_in* inaddr, int portno);
 
-char* serialise_int(char* buffer, int value);
-
-int deserialise_int(char* buffer);
-
-char* serialise_char_array(char* buffer, const char* data);
-
-char* deserialise_char_array(const char* buffer);
-
-char* serialise_packet(char* buffer, Packet* packet);
-
-int sendPacket(int socket, Packet* packet);
-
-Packet receivePacket(int socket);
+int connectSocket(int socket, struct sockaddr_in* inaddr, int portno);
 
 #endif
-

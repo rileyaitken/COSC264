@@ -1,24 +1,24 @@
 /*
  * receiver.c
- * 
+ *
  * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
- * 
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
  * MA 02110-1301, USA.
- * 
- * 
+ *
+ *
  */
 
 
@@ -31,32 +31,28 @@
 #include <netdb.h>
 #include "packet.h"
 #include "serialisation.h"
+#include "socketfunctions.h"
+#include <strings.h>
 
-#define VARNAME(name) #name 
+#define VARNAME(name) #name
 #define MAX_PACKET_SIZE 2048
 
-void error(char* errMsg)
-{
-    perror(errMsg);
-    exit(1);
-} 
 
 int main(int argc, char **argv)
 {
-	int n; // Simple variable for checking return values of function calls
+    int n; // Simple variable for checking return values of function calls
     int r_in; // r_in socket
     int r_out; // r_out socket
-    int cr_out;
+    int cr_out_conn;
     int r_in_portno;
     int r_out_portno;
     int cr_in_portno; // port no for channel's r_in socket
-    struct sockaddr_in rinaddr, routaddr, crinaddr, croutaddr;
-    char* fileName;
+    socklen_t croutaddrlen;
+    FILE* fp;
+    struct sockaddr_in rinaddr, crinaddr, croutaddr, routaddr;
+    char fileName[255]; // Maximum filename length is generally 255 bytes
     int i, expected = 0;
-    Packet inc_packet, ack_packet;  
-    unsigned char* buffer = malloc(MAX_PACKET_SIZE);
-    unsigned char* ptr;
-
+    Packet inc_packet, ack_packet;
     if (argc != 5) {
         fprintf(stderr, "Missing command line arguments for program %s", argv[0]);
         exit(1);
@@ -64,17 +60,24 @@ int main(int argc, char **argv)
     r_in_portno = atoi(argv[1]);
     r_out_portno = atoi(argv[2]);
     cr_in_portno = atoi(argv[3]);
+    
     while (argv[4][i] != '\0') {
+        if (i == 255) {
+            error("Given filename too long.");
+        }
         fileName[i] = argv[4][i];
         i++;
     }
-    fileName[i] = '\0';    
+    fileName[i] = '\0';
 
     if (r_in_portno < 1024 || r_in_portno > 64000) {
         error("The r_in port number is out of range.");
     }
     if (r_out_portno < 1024 || r_out_portno > 64000) {
         error("The r_out port number is out of range.");
+    }
+    if (cr_in_portno < 1024 || cr_in_portno > 64000) {
+        error("The cr_in port number is out of range.");
     }
     if (access(fileName, F_OK) == -1) {
         error("The supplied filename already exists, or a related error occurred.");
@@ -85,25 +88,36 @@ int main(int argc, char **argv)
     if ((r_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the r_out socket.");
     }
-    
-    bzero((char*) &rinaddr, sizeof(rinaddr)); // fill the addr buffer space with zero bytes
+
+    /*bzero((char*) &rinaddr, sizeof(rinaddr)); // fill the addr buffer space with zero bytes
     rinaddr.sin_family = AF_INET; // Is an Internet address
     rinaddr.sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
     rinaddr.sin_port = htons((unsigned short) r_in_portno); // Assign the port to listen on to the socket
     if (bind(r_in, (struct sockaddr*) &rinaddr, sizeof(rinaddr)) < 0) {
         error("Error binding r_in socket to its address.");
     }
-    
+
     bzero((char*) &crinaddr, sizeof(crinaddr));
     crinaddr.sin_family = AF_INET;
     crinaddr.sin_addr.s_addr = INADDR_ANY;
     crinaddr.sin_port = htons(cr_in_portno);
-    if (connect(r_out, &crinaddr, sizeof(crinaddr)) < 0) {
+    if (connect(r_out, (const struct sockaddr*) &crinaddr, sizeof(crinaddr)) < 0) {
         error("Error connecting 'r_out' to 'cs_in' port.");
+    }
+    */
+
+    if ((n = bindSocket(r_in, &rinaddr, r_in_portno)) < 0) {
+        error("Error binding r_in socket to its address.");
+    }
+    if ((n = bindSocket(r_out, &routaddr, r_out_portno)) < 0) {
+        error("Error binding r_out socket to its address.");
+    }
+    if ((n = connectSocket(r_out, &crinaddr, cr_in_portno)) < 0) {
+        error("Error connecting r_out socket to cs_in port.");
     }
 
     if ((fp = fopen(fileName, "w")) < 0) {
-        error("Error opening file for writing."); 
+        error("Error opening file for writing.");
     }
 
     if (listen(r_in, 5) < 0) { // Maximum packet queue size is 5
@@ -113,18 +127,16 @@ int main(int argc, char **argv)
     expected = 0;
 
     while(1) {
-        
+
         croutaddrlen = sizeof(croutaddr);
         if ((cr_out_conn = accept(r_in, (struct sockaddr*) &croutaddr, &croutaddrlen)) < 0) {
             error("Error accepting incoming connection on r_in.");
         }
 
-        // add de-serialisation method call here
-            error("Error receiving packet.");
-        }
+        inc_packet = receivePacket(cr_out_conn);
 
-        close(cr_out_conn);    // Packet has been extracted from incoming connection; close the file descriptor     
-    
+        close(cr_out_conn);    // Packet has been extracted from incoming connection; close the file descriptor
+
         if (inc_packet.magicno != 0x497E || inc_packet.type != PTYPE_DATA) {
             continue;
         }

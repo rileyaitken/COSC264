@@ -11,12 +11,6 @@
 #include "packet.h"
 #include "serialisation.h"
 
-void error(char* errMsg)
-{
-    perror(errMsg);
-    exit(1);
-}
-
 char* serialise_int(char* buffer, int value)
 {
     // Assuming big-endian int values

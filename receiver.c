@@ -31,7 +31,7 @@
 #include <netdb.h>
 #include "packet.h"
 #include "serialisation.h"
-#include "socketfunctions.h"
+#include "functions.h"
 #include <strings.h>
 
 #define VARNAME(name) #name

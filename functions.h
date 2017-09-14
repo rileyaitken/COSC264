@@ -25,13 +25,16 @@
 #define FUNCTIONS_H
 
 #include <stdio.h>
+#include <netinet/in.h>
 
-int bindSocket(int socket, struct sockaddr_in* inaddr, int portno);
+int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno);
 
-int connectSocket(int socket, struct sockaddr_in* inaddr, int portno);
+int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno);
 
 void error(char* errMsg);
 
 void generateRandNum(double* num);
+
+int setSocketOptions(int* socket);
 
 #endif

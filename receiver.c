@@ -50,9 +50,11 @@ int main(int argc, char **argv)
     socklen_t croutaddrlen;
     FILE* fp;
     struct sockaddr_in rinaddr, crinaddr, croutaddr, routaddr;
-    char fileName[255]; // Maximum filename length is generally 255 bytes
-    int i, expected = 0;
+    char fileName[255] = {'\0'}; // Maximum filename length is generally 255 bytes
+    int i = 0;
+    int expected = 0;
     Packet inc_packet, ack_packet;
+    
     if (argc != 5) {
         fprintf(stderr, "Missing command line arguments for program %s", argv[0]);
         exit(1);
@@ -68,7 +70,6 @@ int main(int argc, char **argv)
         fileName[i] = argv[4][i];
         i++;
     }
-    fileName[i] = '\0';
 
     if (r_in_portno < 1024 || r_in_portno > 64000) {
         error("The r_in port number is out of range.");
@@ -79,14 +80,20 @@ int main(int argc, char **argv)
     if (cr_in_portno < 1024 || cr_in_portno > 64000) {
         error("The cr_in port number is out of range.");
     }
-    if (access(fileName, F_OK) == -1) {
+    if (access(fileName, F_OK) == 0) {
         error("The supplied filename already exists, or a related error occurred.");
     }
     if ((r_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the r_in socket.");
     }
+    if ((setSocketOptions(&r_in)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
+    }
     if ((r_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the r_out socket.");
+    }
+    if ((setSocketOptions(&r_out)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
     }
 
     /*bzero((char*) &rinaddr, sizeof(rinaddr)); // fill the addr buffer space with zero bytes
@@ -106,23 +113,27 @@ int main(int argc, char **argv)
     }
     */
 
-    if ((n = bindSocket(r_in, &rinaddr, r_in_portno)) < 0) {
+    if ((n = bindSocket(&r_in, &rinaddr, r_in_portno)) < 0) {
         error("Error binding r_in socket to its address.");
     }
-    if ((n = bindSocket(r_out, &routaddr, r_out_portno)) < 0) {
+    if ((n = bindSocket(&r_out, &routaddr, r_out_portno)) < 0) {
         error("Error binding r_out socket to its address.");
     }
-    if ((n = connectSocket(r_out, &crinaddr, cr_in_portno)) < 0) {
-        error("Error connecting r_out socket to cs_in port.");
+    if (listen(r_in, 5) < 0) { // Maximum packet queue size is 5
+        error("Error getting r_in to 'listen'.");
+    }
+
+    getchar();
+
+    if ((n = connectSocket(&r_out, &crinaddr, cr_in_portno)) < 0) {
+        error("Error connecting r_out socket to cr_in port.");
     }
 
     if ((fp = fopen(fileName, "w")) < 0) {
         error("Error opening file for writing.");
     }
 
-    if (listen(r_in, 5) < 0) { // Maximum packet queue size is 5
-        error("Error getting r_in to 'listen'.");
-    }
+    getchar();
 
     expected = 0;
 

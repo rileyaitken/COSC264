@@ -29,23 +29,25 @@
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <stdlib.h>
+#include <time.h>
 
-int bindSocket(int socket, struct sockaddr_in* inaddr, int portno)
+
+int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno)
 {
     bzero((char*) inaddr, sizeof(*inaddr)); // fill the addr buffer space with zero bytes
     inaddr->sin_family = AF_INET; // Is an Internet address
     inaddr->sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
     inaddr->sin_port = htons((unsigned short) portno); // Assign the port to listen on to the socket
-    return bind(socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
+    return bind(*socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
 }
 
-int connectSocket(int socket, struct sockaddr_in* inaddr, int portno)
+int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno)
 {
     bzero((char*) inaddr, sizeof(*inaddr)); // fill the addr buffer space with zero bytes
     inaddr->sin_family = AF_INET; // Is an Internet address
     inaddr->sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
     inaddr->sin_port = htons((unsigned short) portno); // Assign the port to listen on to the socket
-    return connect(socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
+    return connect(*socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
 }
 
 void error(char* errMsg)
@@ -58,4 +60,11 @@ void generateRandNum(double* num)
 {
     srand(time(NULL));
     *num = ((rand() % 10001) / 10000);
+}
+
+int setSocketOptions(int* socket)
+{
+    int optval = 1;
+    return (setsockopt(*socket, SOL_SOCKET, SO_REUSEADDR,
+        (const void *)&optval, sizeof(int)));
 }

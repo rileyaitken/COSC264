@@ -78,7 +78,8 @@ Packet receivePacket(int socket)
     Packet packet;
     int n = read(socket, &buffer, MAX_PACKET_SIZE);
     if (n < 0) {
-        error("There was an error receiving the packet.");
+        perror("There was an error receiving the packet.");
+        exit(1);
     }
     packet.magicno = deserialise_int(&buffer[0]);
     packet.type = deserialise_int(&buffer[4]);

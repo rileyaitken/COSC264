@@ -87,34 +87,39 @@ int main(int argc, char **argv)
     if ((cr_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the cr_in socket.");
     }
+    if ((setSocketOptions(&cr_in)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
+    }
     if ((cr_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the cr_out socket.");
+    }
+    if ((setSocketOptions(&cr_out)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
     }
     if ((cs_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the cs_in socket.");
     }
+    if ((setSocketOptions(&cs_in)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
+    }
     if ((cs_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         error("Error creating the cs_out socket.");
     }
-
-    if ((n = bindSocket(cr_in, &crinaddr, cr_in_portno)) < 0) {
-        error("Error binding cr_in socket to its address.");
-    }
-    if ((n = bindSocket(cr_out, &croutaddr, cr_out_portno)) < 0) {
-        error("Error binding cr_in socket to its address.");
-    }
-    if ((n = bindSocket(cs_in, &csinaddr, cs_in_portno)) < 0) {
-        error("Error binding cr_in socket to its address.");
-    }
-    if ((n = bindSocket(cs_out, &csoutaddr, cs_out_portno)) < 0) {
-        error("Error binding cr_in socket to its address.");
+    if ((setSocketOptions(&cs_out)) < 0) { // Enable local address reuse
+        error("Error setting s_in options.");
     }
 
-    if ((n = connectSocket(cr_out, &rinaddr, rin_portno)) < 0) {
-        error("Error connecting cr_out socket to r_in socket.");
+    if ((n = bindSocket(&cr_in, &crinaddr, cr_in_portno)) < 0) {
+        error("Error binding cr_in socket to its address.");
     }
-    if ((n = connectSocket(cs_out, &sinaddr, sin_portno)) < 0) {
-        error("Error connecting cs_out socket to s_in socket.");
+    if ((n = bindSocket(&cr_out, &croutaddr, cr_out_portno)) < 0) {
+        error("Error binding cr_in socket to its address.");
+    }
+    if ((n = bindSocket(&cs_in, &csinaddr, cs_in_portno)) < 0) {
+        error("Error binding cr_in socket to its address.");
+    }
+    if ((n = bindSocket(&cs_out, &csoutaddr, cs_out_portno)) < 0) {
+        error("Error binding cr_in socket to its address.");
     }
 
     if ((n = listen(cr_in, 5)) < 0) {
@@ -123,6 +128,17 @@ int main(int argc, char **argv)
     if ((n = listen(cs_in, 5)) < 0) {
         error("Error getting cr_in socket to listen.");
     }
+
+    getchar();
+
+    if ((n = connectSocket(&cr_out, &rinaddr, rin_portno)) < 0) {
+        error("Error connecting cr_out socket to r_in socket.");
+    }
+    if ((n = connectSocket(&cs_out, &sinaddr, sin_portno)) < 0) {
+        error("Error connecting cs_out socket to s_in socket.");
+    }
+
+    getchar();
 
     FD_ZERO(&readSockets);
     FD_SET(cr_in, &readSockets);

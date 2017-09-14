@@ -32,7 +32,7 @@
 #include "packet.h"
 #include "serialisation.h"
 #include "functions.h"
-#include <strings.h>
+#include <string.h>
 
 #define VARNAME(name) #name
 #define MAX_PACKET_SIZE 2048
@@ -87,53 +87,47 @@ int main(int argc, char **argv)
         error("Error creating the r_in socket.");
     }
     if ((setSocketOptions(&r_in)) < 0) { // Enable local address reuse
+        close(r_in);
         error("Error setting s_in options.");
     }
     if ((r_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(r_in);
         error("Error creating the r_out socket.");
     }
     if ((setSocketOptions(&r_out)) < 0) { // Enable local address reuse
+        close(r_in);
+        close(r_out);
         error("Error setting s_in options.");
     }
 
-    /*bzero((char*) &rinaddr, sizeof(rinaddr)); // fill the addr buffer space with zero bytes
-    rinaddr.sin_family = AF_INET; // Is an Internet address
-    rinaddr.sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
-    rinaddr.sin_port = htons((unsigned short) r_in_portno); // Assign the port to listen on to the socket
-    if (bind(r_in, (struct sockaddr*) &rinaddr, sizeof(rinaddr)) < 0) {
-        error("Error binding r_in socket to its address.");
-    }
-
-    bzero((char*) &crinaddr, sizeof(crinaddr));
-    crinaddr.sin_family = AF_INET;
-    crinaddr.sin_addr.s_addr = INADDR_ANY;
-    crinaddr.sin_port = htons(cr_in_portno);
-    if (connect(r_out, (const struct sockaddr*) &crinaddr, sizeof(crinaddr)) < 0) {
-        error("Error connecting 'r_out' to 'cs_in' port.");
-    }
-    */
+    int* socketsToClose[2] = {&r_in, &r_out};
 
     if ((n = bindSocket(&r_in, &rinaddr, r_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
         error("Error binding r_in socket to its address.");
     }
     if ((n = bindSocket(&r_out, &routaddr, r_out_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
         error("Error binding r_out socket to its address.");
     }
     if (listen(r_in, 5) < 0) { // Maximum packet queue size is 5
+        closeSockets(socketsToClose, 2);
         error("Error getting r_in to 'listen'.");
     }
 
-    getchar();
+    sleep(10);
 
     if ((n = connectSocket(&r_out, &crinaddr, cr_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
         error("Error connecting r_out socket to cr_in port.");
     }
 
     if ((fp = fopen(fileName, "w")) < 0) {
+        closeSockets(socketsToClose, 2);
         error("Error opening file for writing.");
     }
 
-    getchar();
+    sleep(10);
 
     expected = 0;
 
@@ -141,6 +135,8 @@ int main(int argc, char **argv)
 
         croutaddrlen = sizeof(croutaddr);
         if ((cr_out_conn = accept(r_in, (struct sockaddr*) &croutaddr, &croutaddrlen)) < 0) {
+            closeSockets(socketsToClose, 2);
+            fclose(fp);
             error("Error accepting incoming connection on r_in.");
         }
 
@@ -152,13 +148,21 @@ int main(int argc, char **argv)
             continue;
         }
 
+        if (inc_packet.dataLen != inc_packet.initLen) {
+            fprintf(stderr, "There was a bit error introduced on this packet.");
+            inc_packet.dataLen = inc_packet.initLen;
+        }
+
         if (inc_packet.seqno != expected) {
             ack_packet.magicno = 0x497E;
             ack_packet.type = PTYPE_ACK;
             ack_packet.seqno = inc_packet.seqno;
             ack_packet.dataLen = 0;
+            ack_packet.initLen = 0;
             n = sendPacket(r_out, &ack_packet);
             if (n < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);
                 error("Error sending acknowledgement packet from 'receiver'.");
             }
         } else {
@@ -166,27 +170,26 @@ int main(int argc, char **argv)
             ack_packet.type = PTYPE_ACK;
             ack_packet.seqno = inc_packet.seqno;
             ack_packet.dataLen = 0;
+            ack_packet.initLen = 0;
             n = sendPacket(r_out, &ack_packet);
             if (n < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);
                 error("Error sending acknowledgement packet from 'receiver'.");
             }
             expected = 1 - expected;
         }
 
+        
         if (inc_packet.dataLen > 0) {
             if ((n = fputs(inc_packet.data, fp)) < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);;
                 error("Error writing packet data to file on 'reciever'.");
             }
         } else if (inc_packet.dataLen == 0) {
-            if ((n = fclose(fp)) < 0) {
-                error("Error closing file on 'receiver'.");
-            }
-            if ((n = close(r_in)) < 0) {
-                error("Error closing the r_in socket.");
-            }
-            if ((n = close(r_out)) < 0) {
-                error("Error closing the r_out socket.");
-            }
+            closeSockets(socketsToClose, 2);
+            fclose(fp);
             exit(0);
         }
     }

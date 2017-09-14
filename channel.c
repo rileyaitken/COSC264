@@ -88,57 +88,83 @@ int main(int argc, char **argv)
         error("Error creating the cr_in socket.");
     }
     if ((setSocketOptions(&cr_in)) < 0) { // Enable local address reuse
+        close(cr_in);
         error("Error setting s_in options.");
     }
     if ((cr_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
         error("Error creating the cr_out socket.");
     }
     if ((setSocketOptions(&cr_out)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cr_out);
         error("Error setting s_in options.");
     }
     if ((cs_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
+        close(cr_out);
         error("Error creating the cs_in socket.");
     }
     if ((setSocketOptions(&cs_in)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
         error("Error setting s_in options.");
     }
     if ((cs_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
         error("Error creating the cs_out socket.");
     }
     if ((setSocketOptions(&cs_out)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
+        close(cr_out);
         error("Error setting s_in options.");
     }
 
+    int* socketsToClose[4] = {&cs_in, &cs_out, &cr_out, &cr_in};
+
     if ((n = bindSocket(&cr_in, &crinaddr, cr_in_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error binding cr_in socket to its address.");
     }
     if ((n = bindSocket(&cr_out, &croutaddr, cr_out_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error binding cr_in socket to its address.");
     }
     if ((n = bindSocket(&cs_in, &csinaddr, cs_in_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error binding cr_in socket to its address.");
     }
     if ((n = bindSocket(&cs_out, &csoutaddr, cs_out_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error binding cr_in socket to its address.");
     }
 
     if ((n = listen(cr_in, 5)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error getting cr_in socket to listen.");
     }
     if ((n = listen(cs_in, 5)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error getting cr_in socket to listen.");
     }
 
-    getchar();
+    sleep(10); // Wait for all sockets to bind before connecting
 
     if ((n = connectSocket(&cr_out, &rinaddr, rin_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error connecting cr_out socket to r_in socket.");
     }
     if ((n = connectSocket(&cs_out, &sinaddr, sin_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
         error("Error connecting cs_out socket to s_in socket.");
     }
 
-    getchar();
+    sleep(10);
 
     FD_ZERO(&readSockets);
     FD_SET(cr_in, &readSockets);
@@ -148,6 +174,7 @@ int main(int argc, char **argv)
     while(1) {
 
         if ((retVal = select(n, &readSockets, NULL, NULL, NULL)) < 0) {
+            closeSockets(socketsToClose, 4);
             error("Error on select()");
         }
         for (i = 0; i < FD_SETSIZE; ++i) {
@@ -155,6 +182,7 @@ int main(int argc, char **argv)
                 if (i == cs_in) {
                     soutaddrlen = sizeof(soutaddr);
                     if ((s_out_conn = accept(cs_in, (struct sockaddr*) &soutaddr, &soutaddrlen)) < 0) {
+                        closeSockets(socketsToClose, 4);
                         error("Error accepting incoming connection on cs_in.");
                     }
                     inc_packet = receivePacket(s_out_conn);
@@ -176,12 +204,14 @@ int main(int argc, char **argv)
 
                         retVal = sendPacket(cs_out, &inc_packet);
                         if (retVal < 0) {
+                            closeSockets(socketsToClose, 4);
                             error("Error sending packet on cr_out to r_in.");
                         }
                     }
                 } else if (i == cr_in) {
                     routaddrlen = sizeof(routaddr);
                     if ((r_out_conn = accept(cr_in, (struct sockaddr*) &routaddr, &routaddrlen)) < 0) {
+                        closeSockets(socketsToClose, 4);
                         error("Error accepting incoming connection on cr_in.");
                     }
                     inc_packet = receivePacket(r_out_conn);
@@ -203,6 +233,7 @@ int main(int argc, char **argv)
 
                         retVal = sendPacket(cs_out, &inc_packet);
                         if (retVal < 0) {
+                            closeSockets(socketsToClose, 4);
                             error("Error sending packet on cr_out to r_in.");
                         }
 

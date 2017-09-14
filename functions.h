@@ -27,11 +27,13 @@
 #include <stdio.h>
 #include <netinet/in.h>
 
+void error(char* errMsg);
+
 int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno);
 
 int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno);
 
-void error(char* errMsg);
+void closeSockets(int* sockets[], int n);
 
 void generateRandNum(double* num);
 

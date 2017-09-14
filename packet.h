@@ -20,6 +20,7 @@ struct packet_s{
     int type;
     int seqno;
     int dataLen;
+    int initLen;
     char* data;
 };
 

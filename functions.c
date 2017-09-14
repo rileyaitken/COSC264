@@ -25,12 +25,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <stdlib.h>
 #include <time.h>
 
+
+void error(char* errMsg)
+{
+    perror(errMsg);
+    exit(1);
+}
 
 int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno)
 {
@@ -50,10 +57,14 @@ int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno)
     return connect(*socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
 }
 
-void error(char* errMsg)
+void closeSockets(int* sockets[], int n)
 {
-    perror(errMsg);
-    exit(1);
+    int i = 0;
+    for (i = 0; i < n; i++) {
+        if (close(*(sockets[i])) < 0) {
+            error("Error closing socket.");
+        }
+    }
 }
 
 void generateRandNum(double* num)

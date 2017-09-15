@@ -1,0 +1,997 @@
+/*
+ * sockets.c
+ *
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ *
+ *
+ */
+
+#define MAX_FILENAME_LEN 20
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <strings.h>
+#include <string.h>
+#include <time.h>
+#include <stdbool.h>
+#include "packet.h"
+#include "serialisation.h"
+#include "functions.h"
+
+#define MAGICNO 0x497E
+
+int main(int argc, char **argv)
+{
+    int s_in_portno, s_out_portno, cs_in_portno = 0;
+    int s_in_sock, s_out_sock = 0;
+    int cs_out_conn = -1;
+    struct sockaddr_in s_in_addr, s_out_addr, cs_in_addr, cs_out_addr;
+    socklen_t cs_out_addr_len = sizeof(cs_out_addr);
+    char fileName[MAX_FILENAME_LEN] = {'\0'};
+    FILE* file_pointer;
+    char data_buffer[1000] = {'\0'};
+    Packet packet_buffer[5];
+    int buffer_counter = 0;
+    time_t current;
+    int n = 0;
+    Packet packet;  /* Packet to be sent */
+    Packet rcvd;    /* Received packet */
+    int next;
+    _Bool exitFlag;
+
+    /* Check there are the correct number of arguments */
+    if (argc != 5) {
+        error("Wrong number of arguments.");
+    }
+    /* Get the arguments */
+    s_in_portno  = atoi(argv[1]);
+    s_out_portno = atoi(argv[2]);
+    cs_in_portno = atoi(argv[3]);
+    strncpy(fileName, argv[4], MAX_FILENAME_LEN);
+
+    /* Check port numbers are between 1024 and 64000 */
+    if (s_in_portno < 1024 || s_in_portno > 64000) {
+        error("s_in_portno out of range");
+    }
+    if (s_out_portno < 1024 || s_out_portno > 64000) {
+        error("s_out_portno out of range");
+    }
+    if (cs_in_portno < 1024 || cs_in_portno > 64000) {
+        error("s_in_portno out of range");
+    }
+
+
+
+    /* Create the sockets */
+    if ((s_in_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        error("Error creating the s_in socket.");
+    }
+    if ((setSocketOptions(&s_in_sock)) < 0) { // Enable local address reuse
+        close(s_in_sock);
+        error("Error setting s_in options.");
+    }
+    if ((s_out_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(s_in_sock);
+        error("Error creating the s_in socket.");
+    }
+    if ((setSocketOptions(&s_out_sock)) < 0) { // Enable local address reuse
+        close(s_in_sock); 
+        close(s_out_sock);
+        error("Error setting s_out options.");
+    }
+
+    int* socketsToClose[2] = {&s_in_sock, &s_out_sock};
+
+    /* Bind the sockets */
+    if ((n = bindSocket(&s_in_sock, &s_in_addr, s_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error binding s_in socket to its address.");
+    }
+    if ((n = bindSocket(&s_out_sock, &s_out_addr, s_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error binding s_in socket to its address.");
+    }
+///* Make s_in socket listen */
+    if (listen(s_in_sock, 5) < 0) { // Maximum packet queue size is 5
+        closeSockets(socketsToClose, 2);
+        error("Error getting s_in to 'listen'.");
+    }
+
+    sleep(10);
+
+    /* Connect the s_out socket to cs_in */
+    if ((n = connectSocket(&s_out_sock, &cs_in_addr, cs_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error connecting s_out socket to cs_in port.");
+    }
+
+
+    /* Check the specified file can be accessed */
+    if (access(fileName, F_OK) == -1) {
+        closeSockets(socketsToClose, 2);
+        error("The supplied filename could not be opened.");
+    }
+
+    /* Open the file for binary reading and get a file pointer */
+    if ((file_pointer = fopen(fileName, "rb")) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error opening file for reading.");
+    }
+    next = 0;
+    exitFlag = false;
+
+    sleep(10);
+
+    while(1) {
+
+    OUTERLOOP:
+        /* Read the first 512 bytes from the file */
+        if((n = fread(data_buffer, 1, 512, file_pointer)) < 0) {
+            closeSockets(socketsToClose, 2);
+            fclose(file_pointer);
+            error("There was an error reading from the file.");
+        }
+
+        printf("\nData buffer: %s\n", data_buffer);
+
+        if (n == 0) {
+            /* If n is 0 data field will be left empty*/
+            packet.magicno = MAGICNO;
+            packet.type    = PTYPE_DATA;
+            packet.seqno   = next;
+            packet.dataLen = 0;
+            packet.initLen = 0;
+            exitFlag = true;
+        } else if (n > 0) {
+            /* If n is greater than 0 data will be sent */
+            packet.magicno = MAGICNO;
+            packet.type    = PTYPE_DATA;
+            packet.seqno   = next;
+            packet.dataLen = n;
+            packet.initLen = n;
+            int i = 0;
+            for (i = 0; i < n; i++) {
+                packet.data[i] = data_buffer[i];
+            }
+            packet.data[i] = '\0';
+            printf("%s", packet.data);
+        }
+
+        printf("magicno = %x\n", packet.magicno);
+        printf("type = %d\n", packet.type);
+        printf("seqno = %d\n", packet.seqno);
+        printf("dataLen = %d\n", packet.dataLen);   
+
+        /* Place packet in packet buffer */
+        packet_buffer[buffer_counter] = packet;
+        buffer_counter++;
+
+        while(1) {
+            printf("Entered sending loop\n");
+            /* Send the packet stored in packet buffer using s_out_sock*/
+            if ((n = sendPacket(s_out_sock, &packet_buffer[buffer_counter - 1])) < 0) {
+                error("Error sending packet.");
+            }
+            printf("Sent packet.");
+
+            /* Wait at most 1 second for an acknowldgement packet
+             * incoming on s_in_sock. If there is no response within the
+             * time limit, go back to the start of this (inner) loop.
+             */;
+            time_t start = time(NULL);
+            while ((current = time(NULL)) - start < 1) {
+                if ((cs_out_conn = accept(s_in_sock, (struct sockaddr*) &cs_out_addr, &cs_out_addr_len)) != -1) {
+                    rcvd = receivePacket(cs_out_conn);
+                    /* If an acknowledgement packet is received, then check it.
+                    * If anything is not as expected, go back to the start
+                    * of this (inner) loop.
+                    */
+                    if (rcvd.magicno != MAGICNO || rcvd.type != PTYPE_ACK ||
+                            rcvd.initLen != 0 || rcvd.seqno != next) {
+                        break;
+                    }
+                    next = 1 - next;
+
+                    if (exitFlag == true) {
+                        closeSockets(socketsToClose, 2);
+                        fclose(file_pointer);
+                        exit(0);
+                    } 
+                    if (exitFlag == false) {
+                        goto OUTERLOOP;
+                    }
+                } else {
+                    continue;
+                }
+
+            }
+        }
+
+    }
+    return 0;
+}
+
+/*
+ * channel.c
+ *
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ *
+ *
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <strings.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include "serialisation.h"
+#include "functions.h"
+#include <sys/select.h>
+
+#define VARNAME(name) #name
+
+int main(int argc, char **argv)
+{
+    int cs_in, cs_out, cr_in, cr_out = 0;
+    int retVal = 0, n = 0, i = 0; // simple value for checking the return values of function calls
+    int cs_in_portno, cs_out_portno, cr_in_portno, cr_out_portno = 0;
+    int sin_portno, rin_portno = 0;
+    int s_out_conn, r_out_conn = 0;
+    socklen_t soutaddrlen, routaddrlen = 0;
+    struct sockaddr_in csinaddr, soutaddr, crinaddr, routaddr, rinaddr, sinaddr, csoutaddr, croutaddr;
+    fd_set readSockets;
+    Packet inc_packet;
+    double p = 0;
+    double u, v = 0; // The pseudo-random double variables
+
+    if (argc != 8) {
+        fprintf(stderr, "Missing command line arguments for program %s", argv[0]);
+        exit(1);
+    }
+
+    cs_in_portno = atoi(argv[1]);
+    cs_out_portno = atoi(argv[2]);
+    cr_in_portno = atoi(argv[3]);
+    cr_out_portno = atoi(argv[4]);
+    sin_portno = atoi(argv[5]);
+    rin_portno = atoi(argv[6]);
+    p = atof(argv[7]);
+
+    if (cs_in_portno < 1024 || cs_in_portno > 64000) {
+        error("The cs_in port number is out of range.");
+    }
+    if (cs_out_portno < 1024 || cs_out_portno > 64000) {
+        error("The cs_out port number is out of range.");
+    }
+    if (cr_in_portno < 1024 || cr_in_portno > 64000) {
+        error("The cr_in port number is out of range.");
+    }
+    if (cr_out_portno < 1024 || cr_out_portno > 64000) {
+        error("The cr_out port number is out of range.");
+    }
+    if (sin_portno < 1024 || sin_portno > 64000) {
+        error("The s_in port number is out of range.");
+    }
+    if (rin_portno < 1024 || rin_portno > 64000) {
+        error("The r_in port number is out of range.");
+    }
+    if (p < 0 || p > 1) {
+        error("The given 'P' value is out of range.");
+    }
+
+    if ((cr_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        error("Error creating the cr_in socket.");
+    }
+    if ((setSocketOptions(&cr_in)) < 0) { // Enable local address reuse
+        close(cr_in);
+        error("Error setting s_in options.");
+    }
+    if ((cr_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
+        error("Error creating the cr_out socket.");
+    }
+    if ((setSocketOptions(&cr_out)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cr_out);
+        error("Error setting s_in options.");
+    }
+    if ((cs_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
+        close(cr_out);
+        error("Error creating the cs_in socket.");
+    }
+    if ((setSocketOptions(&cs_in)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
+        error("Error setting s_in options.");
+    }
+    if ((cs_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
+        error("Error creating the cs_out socket.");
+    }
+    if ((setSocketOptions(&cs_out)) < 0) { // Enable local address reuse
+        close(cr_in);
+        close(cs_in);
+        close(cr_in);
+        close(cr_out);
+        error("Error setting s_in options.");
+    }
+
+    int* socketsToClose[4] = {&cs_in, &cs_out, &cr_out, &cr_in};
+
+    if ((n = bindSocket(&cr_in, &crinaddr, cr_in_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error binding cr_in socket to its address.");
+    }
+    if ((n = bindSocket(&cr_out, &croutaddr, cr_out_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error binding cr_in socket to its address.");
+    }
+    if ((n = bindSocket(&cs_in, &csinaddr, cs_in_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error binding cr_in socket to its address.");
+    }
+    if ((n = bindSocket(&cs_out, &csoutaddr, cs_out_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error binding cr_in socket to its address.");
+    }
+
+    if ((n = listen(cr_in, 5)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error getting cr_in socket to listen.");
+    }
+    if ((n = listen(cs_in, 5)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error getting cr_in socket to listen.");
+    }
+
+    sleep(10); // Wait for all sockets to bind before connecting
+
+    if ((n = connectSocket(&cr_out, &rinaddr, rin_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error connecting cr_out socket to r_in socket.");
+    }
+    if ((n = connectSocket(&cs_out, &sinaddr, sin_portno)) < 0) {
+        closeSockets(socketsToClose, 4);
+        error("Error connecting cs_out socket to s_in socket.");
+    }
+
+    sleep(10);
+
+    FD_ZERO(&readSockets);
+    FD_SET(cr_in, &readSockets);
+    FD_SET(cs_in, &readSockets);
+    n = cs_in + 1; // cs_in is the 'greater' file descriptor
+
+    while(1) {
+
+        if ((retVal = select(8, &readSockets, NULL, NULL, NULL)) < 0) {
+            closeSockets(socketsToClose, 4);
+            error("Error on select()");
+        }
+        printf("Accepted connection.");
+        for (i = 0; i < FD_SETSIZE; ++i) {
+            if (FD_ISSET(i, &readSockets)) {
+                if (i == cs_in) {
+                    printf("Accept cs_in read.");
+                    soutaddrlen = sizeof(soutaddr);
+                    if ((s_out_conn = accept(cs_in, (struct sockaddr*) &soutaddr, &soutaddrlen)) < 0) {
+                        closeSockets(socketsToClose, 4);
+                        error("Error accepting incoming connection on cs_in.");
+                    }
+                    inc_packet = receivePacket(s_out_conn);
+                    close(s_out_conn);
+
+                    if (inc_packet.magicno != 0x497E) {
+                        continue;
+                    }
+
+                    generateRandNum(&u);
+                    // Generate a random int between 0 and 10000, then divide that integer by 10000 to get the floating point value
+                    if (u < p) {
+                        continue;
+                    } else {
+                        generateRandNum(&v);
+                        if (v < 0.1) {
+                            inc_packet.dataLen += ((rand() % 10) + 1);
+                        }
+
+                        retVal = sendPacket(cs_out, &inc_packet);
+                        if (retVal < 0) {
+                            closeSockets(socketsToClose, 4);
+                            error("Error sending packet on cr_out to r_in.");
+                        }
+                    }
+                } else if (i == cr_in) {
+                    routaddrlen = sizeof(routaddr);
+                    if ((r_out_conn = accept(cr_in, (struct sockaddr*) &routaddr, &routaddrlen)) < 0) {
+                        closeSockets(socketsToClose, 4);
+                        error("Error accepting incoming connection on cr_in.");
+                    }
+                    inc_packet = receivePacket(r_out_conn);
+                    close(r_out_conn);
+
+                    if (inc_packet.magicno != 0x497E) {
+                        continue;
+                    }
+
+                    generateRandNum(&u);
+                    // Generate a random int between 0 and 10000, then divide that integer by 10000 to get the floating point value
+                    if (u < p) {
+                        continue;
+                    } else {
+                        generateRandNum(&v);
+                        if (v < 0.1) {
+                            inc_packet.dataLen += ((rand() % 10) + 1); // generate random int between 1 and 10
+                        }
+
+                        retVal = sendPacket(cs_out, &inc_packet);
+                        if (retVal < 0) {
+                            closeSockets(socketsToClose, 4);
+                            error("Error sending packet on cr_out to r_in.");
+                        }
+
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/*
+ * functions.c
+ * 
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ * 
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ * 
+ * 
+ */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <strings.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <stdlib.h>
+#include <time.h>
+
+
+void error(char* errMsg)
+{
+    perror(errMsg);
+    exit(1);
+}
+
+int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno)
+{
+    bzero((char*) inaddr, sizeof(*inaddr)); // fill the addr buffer space with zero bytes
+    inaddr->sin_family = AF_INET; // Is an Internet address
+    inaddr->sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
+    inaddr->sin_port = htons((unsigned short) portno); // Assign the port to listen on to the socket
+    return bind(*socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
+}
+
+int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno)
+{
+    bzero((char*) inaddr, sizeof(*inaddr)); // fill the addr buffer space with zero bytes
+    inaddr->sin_family = AF_INET; // Is an Internet address
+    inaddr->sin_addr.s_addr = INADDR_ANY; // Get this socket's IP address (local)
+    inaddr->sin_port = htons((unsigned short) portno); // Assign the port to listen on to the socket
+    return connect(*socket, (struct sockaddr*) inaddr, sizeof(*inaddr));
+}
+
+void closeSockets(int* sockets[], int n)
+{
+    int i = 0;
+    for (i = 0; i < n; i++) {
+        if (close(*(sockets[i])) < 0) {
+            error("Error closing socket.");
+        }
+    }
+}
+
+void generateRandNum(double* num)
+{
+    srand(time(NULL));
+    *num = ((rand() % 10001) / 10000);
+}
+
+int setSocketOptions(int* socket)
+{
+    int optval = 1;
+    return (setsockopt(*socket, SOL_SOCKET, SO_REUSEADDR,
+        (const void *)&optval, sizeof(int)));
+}
+
+/*
+ * functions.h
+ * 
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ * 
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ * 
+ * 
+ */
+
+#ifndef FUNCTIONS_H
+#define FUNCTIONS_H
+
+#include <stdio.h>
+#include <netinet/in.h>
+
+void error(char* errMsg);
+
+int bindSocket(int* socket, struct sockaddr_in* inaddr, int portno);
+
+int connectSocket(int* socket, struct sockaddr_in* inaddr, int portno);
+
+void closeSockets(int* sockets[], int n);
+
+void generateRandNum(double* num);
+
+int setSocketOptions(int* socket);
+
+#endif
+
+/*
+ * packet.h
+ * 
+ * Defines the 'Packet' type,
+ * and a few constants.
+ */
+
+#ifndef PACKET_H 
+#include <stdio.h>
+
+typedef struct packet_s Packet;
+
+#define PTYPE_DATA 0
+#define PTYPE_ACK 1
+
+struct packet_s{
+    int magicno;
+    int type;
+    int seqno;
+    int dataLen;
+    int initLen;
+    char data[1000];
+};
+
+#endif
+
+/*
+ * packet.h
+ * 
+ * Defines the 'Packet' type,
+ * and a few constants.
+ */
+
+#ifndef PACKET_H 
+#include <stdio.h>
+
+typedef struct packet_s Packet;
+
+#define PTYPE_DATA 0
+#define PTYPE_ACK 1
+
+struct packet_s{
+    int magicno;
+    int type;
+    int seqno;
+    int dataLen;
+    int initLen;
+    char data[1000];
+};
+
+#endif
+
+/*
+ * receiver.c
+ *
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ *
+ *
+ */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include "packet.h"
+#include "serialisation.h"
+#include "functions.h"
+#include <string.h>
+
+#define VARNAME(name) #name
+#define MAX_PACKET_SIZE 2048
+
+
+int main(int argc, char **argv)
+{
+    int n; // Simple variable for checking return values of function calls
+    int r_in; // r_in socket
+    int r_out; // r_out socket
+    int cr_out_conn;
+    int r_in_portno;
+    int r_out_portno;
+    int cr_in_portno; // port no for channel's r_in socket
+    socklen_t croutaddrlen;
+    FILE* fp;
+    struct sockaddr_in rinaddr, crinaddr, croutaddr, routaddr;
+    char fileName[255] = {'\0'}; // Maximum filename length is generally 255 bytes
+    int i = 0;
+    int expected = 0;
+    Packet inc_packet, ack_packet;
+    
+    if (argc != 5) {
+        fprintf(stderr, "Missing command line arguments for program %s", argv[0]);
+        exit(1);
+    }
+    r_in_portno = atoi(argv[1]);
+    r_out_portno = atoi(argv[2]);
+    cr_in_portno = atoi(argv[3]);
+    
+    while (argv[4][i] != '\0') {
+        if (i == 255) {
+            error("Given filename too long.");
+        }
+        fileName[i] = argv[4][i];
+        i++;
+    }
+
+    if (r_in_portno < 1024 || r_in_portno > 64000) {
+        error("The r_in port number is out of range.");
+    }
+    if (r_out_portno < 1024 || r_out_portno > 64000) {
+        error("The r_out port number is out of range.");
+    }
+    if (cr_in_portno < 1024 || cr_in_portno > 64000) {
+        error("The cr_in port number is out of range.");
+    }
+    if (access(fileName, F_OK) == 0) {
+        error("The supplied filename already exists, or a related error occurred.");
+    }
+    if ((r_in = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        error("Error creating the r_in socket.");
+    }
+    if ((setSocketOptions(&r_in)) < 0) { // Enable local address reuse
+        close(r_in);
+        error("Error setting s_in options.");
+    }
+    if ((r_out = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        close(r_in);
+        error("Error creating the r_out socket.");
+    }
+    if ((setSocketOptions(&r_out)) < 0) { // Enable local address reuse
+        close(r_in);
+        close(r_out);
+        error("Error setting s_in options.");
+    }
+
+    int* socketsToClose[2] = {&r_in, &r_out};
+
+    if ((n = bindSocket(&r_in, &rinaddr, r_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error binding r_in socket to its address.");
+    }
+    if ((n = bindSocket(&r_out, &routaddr, r_out_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error binding r_out socket to its address.");
+    }
+    if (listen(r_in, 5) < 0) { // Maximum packet queue size is 5
+        closeSockets(socketsToClose, 2);
+        error("Error getting r_in to 'listen'.");
+    }
+
+    sleep(10);
+
+    if ((n = connectSocket(&r_out, &crinaddr, cr_in_portno)) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error connecting r_out socket to cr_in port.");
+    }
+
+    if ((fp = fopen(fileName, "w")) < 0) {
+        closeSockets(socketsToClose, 2);
+        error("Error opening file for writing.");
+    }
+
+    sleep(10);
+
+    expected = 0;
+
+    while(1) {
+
+        croutaddrlen = sizeof(croutaddr);
+        if ((cr_out_conn = accept(r_in, (struct sockaddr*) &croutaddr, &croutaddrlen)) < 0) {
+            closeSockets(socketsToClose, 2);
+            fclose(fp);
+            error("Error accepting incoming connection on r_in.");
+        }
+
+        inc_packet = receivePacket(cr_out_conn);
+
+        close(cr_out_conn);    // Packet has been extracted from incoming connection; close the file descriptor
+
+        if (inc_packet.magicno != 0x497E || inc_packet.type != PTYPE_DATA) {
+            continue;
+        }
+
+        if (inc_packet.dataLen != inc_packet.initLen) {
+            fprintf(stderr, "There was a bit error introduced on this packet.");
+            inc_packet.dataLen = inc_packet.initLen;
+        }
+
+        if (inc_packet.seqno != expected) {
+            ack_packet.magicno = 0x497E;
+            ack_packet.type = PTYPE_ACK;
+            ack_packet.seqno = inc_packet.seqno;
+            ack_packet.dataLen = 0;
+            ack_packet.initLen = 0;
+            n = sendPacket(r_out, &ack_packet);
+            if (n < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);
+                error("Error sending acknowledgement packet from 'receiver'.");
+            }
+        } else {
+            ack_packet.magicno = 0x497E;
+            ack_packet.type = PTYPE_ACK;
+            ack_packet.seqno = inc_packet.seqno;
+            ack_packet.dataLen = 0;
+            ack_packet.initLen = 0;
+            n = sendPacket(r_out, &ack_packet);
+            if (n < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);
+                error("Error sending acknowledgement packet from 'receiver'.");
+            }
+            expected = 1 - expected;
+        }
+
+        
+        if (inc_packet.dataLen > 0) {
+            if ((n = fputs(inc_packet.data, fp)) < 0) {
+                closeSockets(socketsToClose, 2);
+                fclose(fp);;
+                error("Error writing packet data to file on 'reciever'.");
+            }
+        } else if (inc_packet.dataLen == 0) {
+            closeSockets(socketsToClose, 2);
+            fclose(fp);
+            exit(0);
+        }
+    }
+}
+
+/*
+ * serialisation.c
+ */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include "packet.h"
+#include "serialisation.h"
+
+char* serialise_int(char* buffer, int value)
+{
+    /* Assuming big-endian int values
+    buffer[0] = value >> 24;
+    buffer[1] = value >> 16;
+    buffer[2] = value >> 8;
+    buffer[3] = value;
+    */
+    unsigned int num2 = htonl((unsigned int) value);
+    memcpy(buffer, &num2, 4);
+    return buffer + 4;
+}
+
+int deserialise_int(char* buffer)
+{  
+    int value = 0;
+    memcpy(&value, buffer, 4);
+    return value; 
+}
+
+char* serialise_char_array(char* buffer, const char* data)
+{
+    int strLen = strlen(data);
+    int i = 0;
+    for (i = 0; i < strLen; i++) {
+        buffer[i] = data[i];
+    }
+    buffer [i] = '\0'; 
+    //memcpy(buffer, data, strLen);
+    return buffer + i;
+}
+
+void deserialise_char_array(const char* buffer, Packet* packet)
+{
+    int strLen = strlen(buffer);
+    memcpy(packet->data, buffer, strLen + 1);
+}
+
+char* serialise_packet(char* buffer, Packet* packet)
+{
+    buffer = serialise_int(buffer, packet->magicno);  
+    buffer = serialise_int(buffer, packet->type); 
+    buffer = serialise_int(buffer, packet->seqno); 
+    buffer = serialise_int(buffer, packet->dataLen);
+    if (packet->dataLen > 0) { 
+        buffer = serialise_char_array(buffer, packet->data);
+        printf("serialise_packet. buffer = %s\n", buffer);
+    }
+    return buffer;
+}
+
+int sendPacket(int socket, Packet* packet)
+{
+    char buffer[MAX_PACKET_SIZE];
+    char* ptr;
+    ptr = serialise_packet(buffer, packet);
+    printf("sendPacket. buffer = %s\n", buffer);
+    return send(socket, buffer, ptr - buffer, 0);
+}
+
+Packet receivePacket(int socket)
+{
+    char buffer[MAX_PACKET_SIZE];
+    Packet packet;
+    int n = read(socket, &buffer, MAX_PACKET_SIZE);
+    if (n < 0) {
+        perror("There was an error receiving the packet.");
+        exit(1);
+    }
+    packet.magicno = deserialise_int(&buffer[0]);
+    packet.type = deserialise_int(&buffer[4]);
+    packet.seqno = deserialise_int(&buffer[8]);
+    packet.dataLen = deserialise_int(&buffer[12]);
+    if (packet.dataLen > 0) {
+        deserialise_char_array(&buffer[16], &packet);
+    }
+    printf("A packet with seqno: %d was received.", packet.seqno);
+    return packet;
+}
+     
+
+/*
+ * serialisation.h
+ * 
+ * Copyright 2017 Riley James Aitken <rai29@cs14136jm>
+ * 
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ * 
+ * 
+ */
+
+#ifndef SERIALISATION_H
+#define SERIALISATION_H
+#include <stdio.h>
+#include "packet.h"
+
+char* serialise_int(char* buffer, int value);
+
+int deserialise_int(char* buffer);
+
+char* serialise_char_array(char* buffer, const char* data);
+
+void deserialise_char_array(const char* buffer, Packet* packet);
+
+char* serialise_packet(char* buffer, Packet* packet);
+
+int sendPacket(int socket, Packet* packet);
+
+Packet receivePacket(int socket);
+
+#endif
+
+
+
